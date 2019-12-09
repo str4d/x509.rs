@@ -70,6 +70,28 @@ pub mod write {
         tuple((der_type(typ), der_length(content.len()), slice(content)))
     }
 
+    /// Encodes a big-endian-encoded integer as an ASN.1 integer using DER.
+    pub fn der_integer<'a, W: Write + 'a>(mut num: &'a [u8]) -> impl SerializeFn<W> + 'a {
+        // DER: Leading zeroes must be trimmed.
+        while !num.is_empty() && num[0] == 0 {
+            num = &num[1..];
+        }
+
+        der_tlv(
+            DerType::Integer,
+            pair(
+                // DER: Leading bit of an unsigned integer must have value 0.
+                cond(num.is_empty() || num[0] >= 0x80, slice(&[0])),
+                slice(num),
+            ),
+        )
+    }
+
+    /// Encodes a usize as an ASN.1 integer using DER.
+    pub fn der_integer_usize<W: Write>(num: usize) -> impl SerializeFn<W> {
+        move |w: WriteContext<W>| der_integer(&num.to_be_bytes())(w)
+    }
+
     #[cfg(test)]
     mod tests {
         use cookie_factory::gen_simple;
@@ -113,6 +135,46 @@ pub mod write {
             assert_eq!(
                 gen_simple(der_tlv(DerType::Integer, slice(&[0x07; 4])), vec![]).unwrap(),
                 &[0x02, 0x04, 0x07, 0x07, 0x07, 0x07]
+            );
+        }
+
+        #[test]
+        fn der_usize_integers() {
+            assert_eq!(
+                gen_simple(der_integer_usize(0), vec![]).unwrap(),
+                vec![2, 1, 0]
+            );
+            assert_eq!(
+                gen_simple(der_integer_usize(127), vec![]).unwrap(),
+                vec![2, 1, 127]
+            );
+            assert_eq!(
+                gen_simple(der_integer_usize(128), vec![]).unwrap(),
+                vec![2, 2, 0, 128]
+            );
+            assert_eq!(
+                gen_simple(der_integer_usize(255), vec![]).unwrap(),
+                vec![2, 2, 0, 255]
+            );
+            assert_eq!(
+                gen_simple(der_integer_usize(256), vec![]).unwrap(),
+                vec![2, 2, 1, 0]
+            );
+            assert_eq!(
+                gen_simple(der_integer_usize(32767), vec![]).unwrap(),
+                vec![2, 2, 127, 255]
+            );
+            assert_eq!(
+                gen_simple(der_integer_usize(32768), vec![]).unwrap(),
+                vec![2, 3, 0, 128, 0]
+            );
+            assert_eq!(
+                gen_simple(der_integer_usize(65535), vec![]).unwrap(),
+                vec![2, 3, 0, 255, 255]
+            );
+            assert_eq!(
+                gen_simple(der_integer_usize(65536), vec![]).unwrap(),
+                vec![2, 3, 1, 0, 0]
             );
         }
     }
