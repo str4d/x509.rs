@@ -1,6 +1,7 @@
 /// DER types that we care about.
 enum DerType {
     Integer,
+    Oid,
     Sequence,
 }
 
@@ -10,23 +11,29 @@ impl DerType {
         match self {
             // Universal | Primitive | INTEGER
             DerType::Integer => (0, 0, 2),
+            // Universal | Primitive | OBJECT IDENTIFIER
+            DerType::Oid => (0, 0, 6),
             // Universal | Constructed | SEQUENCE
             DerType::Sequence => (0, 1, 16),
         }
     }
 }
 
+/// A trait for objects which represent ASN.1 object identifiers.
+pub trait Oid: AsRef<[u64]> {}
+
 pub mod write {
     use cookie_factory::{
         bytes::be_u8,
         combinator::{cond, slice},
         gen_simple,
+        multi::all,
         sequence::{pair, tuple, Tuple},
         SerializeFn, WriteContext,
     };
     use std::io::Write;
 
-    use super::DerType;
+    use super::{DerType, Oid};
 
     /// Encodes an ASN.1 type.
     fn der_type<W: Write>(typ: DerType) -> impl SerializeFn<W> {
@@ -90,6 +97,63 @@ pub mod write {
     /// Encodes a usize as an ASN.1 integer using DER.
     pub fn der_integer_usize<W: Write>(num: usize) -> impl SerializeFn<W> {
         move |w: WriteContext<W>| der_integer(&num.to_be_bytes())(w)
+    }
+
+    /// Encodes an ASN.1 Object Identifier using DER.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `oid.as_ref().len() < 2`.
+    pub fn der_oid<W: Write, OID: Oid>(oid: OID) -> impl SerializeFn<W> {
+        /// From X.690 section 8.19.2:
+        /// ```text
+        /// Each subidentifier is represented as a series of (one or more) octets. Bit 8
+        /// of each octet indicates whether it is the last in the series: bit 8 of the
+        /// last octet is zero; bit 8 of each preceding octet is one. Bits 7 to 1 of the
+        /// octets in the series collectively encode the subidentifier. Conceptually,
+        /// these groups of bits are concatenated to form an unsigned binary number whose
+        /// most significant bit is bit 7 of the first octet and whose least significant
+        /// bit is bit 1 of the last octet. The subidentifier shall be encoded in the
+        /// fewest possible octets, that is, the leading octet of the subidentifier shall
+        /// not have the value 0x80.
+        /// ```
+        fn subidentifier<W: Write>(id: u64) -> impl SerializeFn<W> {
+            let id_bytes = [
+                0x80 | ((id >> (9 * 7)) as u8 & 0x7f),
+                0x80 | ((id >> (8 * 7)) as u8 & 0x7f),
+                0x80 | ((id >> (7 * 7)) as u8 & 0x7f),
+                0x80 | ((id >> (6 * 7)) as u8 & 0x7f),
+                0x80 | ((id >> (5 * 7)) as u8 & 0x7f),
+                0x80 | ((id >> (4 * 7)) as u8 & 0x7f),
+                0x80 | ((id >> (3 * 7)) as u8 & 0x7f),
+                0x80 | ((id >> (2 * 7)) as u8 & 0x7f),
+                0x80 | ((id >> 7) as u8 & 0x7f),
+                id as u8 & 0x7f,
+            ];
+
+            move |w: WriteContext<W>| {
+                let mut id_slice = &id_bytes[..];
+                while !id_slice.is_empty() && id_slice[0] == 0x80 {
+                    id_slice = &id_slice[1..];
+                }
+                slice(id_slice)(w)
+            }
+        }
+
+        move |w: WriteContext<W>| {
+            let oid_slice = oid.as_ref();
+            assert!(oid_slice.len() >= 2);
+
+            der_tlv(
+                DerType::Oid,
+                pair(
+                    // The numerical value of the first subidentifier is derived from the
+                    // values of the first two object identifier components.
+                    subidentifier(oid_slice[0] * 40 + oid_slice[1]),
+                    all(oid_slice[2..].iter().map(|id| subidentifier(*id))),
+                ),
+            )(w)
+        }
     }
 
     /// Encodes the output of a sequence of serializers as an ASN.1 sequence using DER.
