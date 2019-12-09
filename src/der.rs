@@ -3,6 +3,7 @@ enum DerType {
     Integer,
     BitString,
     Oid,
+    Utf8String,
     Sequence,
 }
 
@@ -16,6 +17,8 @@ impl DerType {
             DerType::BitString => (0, 0, 3),
             // Universal | Primitive | OBJECT IDENTIFIER
             DerType::Oid => (0, 0, 6),
+            // Universal | Primitive | UTF8String
+            DerType::Utf8String => (0, 0, 12),
             // Universal | Constructed | SEQUENCE
             DerType::Sequence => (0, 1, 16),
         }
@@ -28,7 +31,7 @@ pub trait Oid: AsRef<[u64]> {}
 pub mod write {
     use cookie_factory::{
         bytes::be_u8,
-        combinator::{cond, slice},
+        combinator::{cond, slice, string},
         gen_simple,
         multi::all,
         sequence::{pair, tuple, Tuple},
@@ -170,6 +173,11 @@ pub mod write {
                 ),
             )(w)
         }
+    }
+
+    /// Encodes an ASN.1 UTF8String using DER.
+    pub fn der_utf8_string<'a, W: Write + 'a>(s: &'a str) -> impl SerializeFn<W> + 'a {
+        der_tlv(DerType::Utf8String, string(s))
     }
 
     /// Encodes the output of a sequence of serializers as an ASN.1 sequence using DER.
