@@ -5,6 +5,8 @@ enum DerType {
     Oid,
     Utf8String,
     Sequence,
+    UtcTime,
+    GeneralizedTime,
 }
 
 impl DerType {
@@ -21,6 +23,10 @@ impl DerType {
             DerType::Utf8String => (0, 0, 12),
             // Universal | Constructed | SEQUENCE
             DerType::Sequence => (0, 1, 16),
+            // Universal | Both | UTCTime
+            DerType::UtcTime => (0, 0, 23),
+            // Universal | Both | GeneralizedTime
+            DerType::GeneralizedTime => (0, 0, 24),
         }
     }
 }
@@ -29,6 +35,7 @@ impl DerType {
 pub trait Oid: AsRef<[u64]> {}
 
 pub mod write {
+    use chrono::{DateTime, Utc};
     use cookie_factory::{
         bytes::be_u8,
         combinator::{cond, slice, string},
@@ -185,6 +192,22 @@ pub mod write {
         der_tlv(DerType::Sequence, move |w: WriteContext<Vec<u8>>| {
             l.serialize(w)
         })
+    }
+
+    /// Encodes an ASN.1 UTCTime using DER.
+    pub fn der_utc_time<W: Write>(t: DateTime<Utc>) -> impl SerializeFn<W> {
+        der_tlv(
+            DerType::UtcTime,
+            string(t.format("%y%m%d%H%M%SZ").to_string()),
+        )
+    }
+
+    /// Encodes an ASN.1 GeneralizedTime using DER.
+    pub fn der_generalized_time<W: Write>(t: DateTime<Utc>) -> impl SerializeFn<W> {
+        der_tlv(
+            DerType::GeneralizedTime,
+            string(t.format("%Y%m%d%H%M%SZ").to_string()),
+        )
     }
 
     #[cfg(test)]
