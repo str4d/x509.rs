@@ -5,6 +5,7 @@ enum DerType {
     Oid,
     Utf8String,
     Sequence,
+    Set,
     UtcTime,
     GeneralizedTime,
 }
@@ -23,6 +24,8 @@ impl DerType {
             DerType::Utf8String => (0, 0, 12),
             // Universal | Constructed | SEQUENCE
             DerType::Sequence => (0, 1, 16),
+            // Universal | Constructed | SET
+            DerType::Set => (0, 1, 17),
             // Universal | Both | UTCTime
             DerType::UtcTime => (0, 0, 23),
             // Universal | Both | GeneralizedTime
@@ -192,6 +195,14 @@ pub mod write {
         der_tlv(DerType::Sequence, move |w: WriteContext<Vec<u8>>| {
             l.serialize(w)
         })
+    }
+
+    /// Encodes the output of a sequence of serializers as an ASN.1 set using DER.
+    pub fn der_set<W: Write, List: Tuple<Vec<u8>>>(l: List) -> impl SerializeFn<W> {
+        // DER: The encodings of the component values of a set value shall appear in an
+        // order determined by their tags.
+        // TODO: Try to enforce this here.
+        der_tlv(DerType::Set, move |w: WriteContext<Vec<u8>>| l.serialize(w))
     }
 
     /// Encodes an ASN.1 UTCTime using DER.
