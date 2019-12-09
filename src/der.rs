@@ -1,6 +1,7 @@
 /// DER types that we care about.
 enum DerType {
     Integer,
+    BitString,
     Oid,
     Sequence,
 }
@@ -11,6 +12,8 @@ impl DerType {
         match self {
             // Universal | Primitive | INTEGER
             DerType::Integer => (0, 0, 2),
+            // Universal | Primitive | BIT STRING
+            DerType::BitString => (0, 0, 3),
             // Universal | Primitive | OBJECT IDENTIFIER
             DerType::Oid => (0, 0, 6),
             // Universal | Constructed | SEQUENCE
@@ -97,6 +100,19 @@ pub mod write {
     /// Encodes a usize as an ASN.1 integer using DER.
     pub fn der_integer_usize<W: Write>(num: usize) -> impl SerializeFn<W> {
         move |w: WriteContext<W>| der_integer(&num.to_be_bytes())(w)
+    }
+
+    /// Encodes an ASN.1 bit string using DER.
+    ///
+    /// From X.690 section 8.6:
+    /// ```text
+    /// - The contents octets for the primitive encoding shall contain an initial octet
+    ///   followed by zero, one or more subsequent octets.
+    /// - The initial octet shall encode, as an unsigned binary integer with bit 1 as the
+    ///   least significant bit, the number of unused bits in the final subsequent octet.
+    /// ```
+    pub fn der_bit_string<'a, W: Write + 'a>(bytes: &'a [u8]) -> impl SerializeFn<W> + 'a {
+        der_tlv(DerType::BitString, pair(be_u8(0), slice(bytes)))
     }
 
     /// Encodes an ASN.1 Object Identifier using DER.
