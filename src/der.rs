@@ -21,7 +21,7 @@ pub mod write {
         bytes::be_u8,
         combinator::{cond, slice},
         gen_simple,
-        sequence::{pair, tuple},
+        sequence::{pair, tuple, Tuple},
         SerializeFn, WriteContext,
     };
     use std::io::Write;
@@ -90,6 +90,13 @@ pub mod write {
     /// Encodes a usize as an ASN.1 integer using DER.
     pub fn der_integer_usize<W: Write>(num: usize) -> impl SerializeFn<W> {
         move |w: WriteContext<W>| der_integer(&num.to_be_bytes())(w)
+    }
+
+    /// Encodes the output of a sequence of serializers as an ASN.1 sequence using DER.
+    pub fn der_sequence<W: Write, List: Tuple<Vec<u8>>>(l: List) -> impl SerializeFn<W> {
+        der_tlv(DerType::Sequence, move |w: WriteContext<Vec<u8>>| {
+            l.serialize(w)
+        })
     }
 
     #[cfg(test)]
