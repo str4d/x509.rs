@@ -37,6 +37,8 @@ impl DerType {
 /// A trait for objects which represent ASN.1 object identifiers.
 pub trait Oid: AsRef<[u64]> {}
 
+impl Oid for &'static [u64] {}
+
 pub mod write {
     use chrono::{DateTime, Utc};
     use cookie_factory::{
