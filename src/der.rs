@@ -1,5 +1,6 @@
 /// DER types that we care about.
 enum DerType {
+    Explicit,
     Integer,
     BitString,
     Oid,
@@ -14,6 +15,8 @@ impl DerType {
     /// Returns the class, encoding, and type number for this type.
     pub(super) fn parts(&self) -> (u8, u8, u8) {
         match self {
+            // Context-specific | Constructed | EOC
+            DerType::Explicit => (2, 1, 0),
             // Universal | Primitive | INTEGER
             DerType::Integer => (0, 0, 2),
             // Universal | Primitive | BIT STRING
@@ -93,6 +96,16 @@ pub mod write {
         let content = gen_simple(ser_content, vec![]).expect("can serialize into Vec");
 
         tuple((der_type(typ), der_length(content.len()), slice(content)))
+    }
+
+    /// Wraps an ASN.1 data value in an EXPLICIT marker.
+    ///
+    /// TODO: Find a specification reference for this.
+    pub fn der_explicit<W: Write, Gen>(inner: Gen) -> impl SerializeFn<W>
+    where
+        Gen: SerializeFn<Vec<u8>>,
+    {
+        der_tlv(DerType::Explicit, inner)
     }
 
     /// Encodes a big-endian-encoded integer as an ASN.1 integer using DER.
