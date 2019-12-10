@@ -1,3 +1,10 @@
+//! *Pure-Rust X.509 certificate serialization*
+//!
+//! `x509` is a crate providing serialization APIs for X.509 v3 ([RFC 5280]) certificates,
+//! implemented using the `cookie-factory` combinatorial serializer framework.
+//!
+//! [RFC 5280]: https://tools.ietf.org/html/rfc5280
+
 use cookie_factory::{GenResult, WriteContext};
 use std::io::Write;
 
@@ -26,6 +33,7 @@ pub trait SubjectPublicKeyInfo {
     fn public_key(&self) -> Self::SubjectPublicKey;
 }
 
+/// X.509 serialization APIs.
 pub mod write {
     use chrono::{DateTime, Datelike, TimeZone, Utc};
     use cookie_factory::{

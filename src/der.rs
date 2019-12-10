@@ -1,3 +1,5 @@
+//! Handlers for DER serialization.
+
 /// DER types that we care about.
 enum DerType {
     Explicit,
@@ -42,6 +44,7 @@ pub trait Oid: AsRef<[u64]> {}
 
 impl Oid for &'static [u64] {}
 
+/// DER serialization APIs.
 pub mod write {
     use chrono::{DateTime, Utc};
     use cookie_factory::{
