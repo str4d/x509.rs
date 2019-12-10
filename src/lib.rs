@@ -221,8 +221,12 @@ pub mod write {
     /// Certificate users MUST be able to handle serialNumber values up to 20 octets.
     /// Conforming CAs MUST NOT use serialNumber values longer than 20 octets.
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `serial_number.len() > 20`.
     pub fn tbs_certificate<'a, W: Write + 'a, Alg, PKI>(
-        serial_number: &'a [u8; 20],
+        serial_number: &'a [u8],
         signature: &'a Alg,
         issuer: &'a str,
         not_before: DateTime<Utc>,
@@ -234,6 +238,8 @@ pub mod write {
         Alg: AlgorithmIdentifier,
         PKI: SubjectPublicKeyInfo,
     {
+        assert!(serial_number.len() <= 20);
+
         der_sequence((
             version(Version::V1),
             der_integer(serial_number),
