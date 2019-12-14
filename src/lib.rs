@@ -51,13 +51,13 @@ pub mod write {
     /// X.509 versions that we care about.
     #[derive(Clone, Copy)]
     enum Version {
-        V1,
+        V3,
     }
 
     impl From<Version> for usize {
         fn from(version: Version) -> usize {
             match version {
-                Version::V1 => 0,
+                Version::V3 => 2,
             }
         }
     }
@@ -241,7 +241,7 @@ pub mod write {
         assert!(serial_number.len() <= 20);
 
         der_sequence((
-            version(Version::V1),
+            version(Version::V3),
             der_integer(serial_number),
             algorithm_identifier(signature),
             name(issuer),
