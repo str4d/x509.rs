@@ -5,6 +5,7 @@ enum DerType {
     Explicit,
     Integer,
     BitString,
+    OctetString,
     Oid,
     Utf8String,
     Sequence,
@@ -23,6 +24,8 @@ impl DerType {
             DerType::Integer => (0, 0, 2),
             // Universal | Primitive | BIT STRING
             DerType::BitString => (0, 0, 3),
+            // Universal | Primitive | OCTET STRING
+            DerType::OctetString => (0, 0, 4),
             // Universal | Primitive | OBJECT IDENTIFIER
             DerType::Oid => (0, 0, 6),
             // Universal | Primitive | UTF8String
@@ -144,6 +147,19 @@ pub mod write {
     /// ```
     pub fn der_bit_string<'a, W: Write + 'a>(bytes: &'a [u8]) -> impl SerializeFn<W> + 'a {
         der_tlv(DerType::BitString, pair(be_u8(0), slice(bytes)))
+    }
+
+    /// Encodes an ASN.1 octet string using DER.
+    ///
+    /// From X.690 section 8.7.2:
+    /// ```text
+    /// The primitive encoding contains zero, one or more contents octets equal in value
+    /// to the octets in the data value, in the order they appear in the data value, and
+    /// with the most significant bit of an octet of the data value aligned with the most
+    /// significant bit of an octet of the contents octets.
+    /// ```
+    pub fn der_octet_string<'a, W: Write + 'a>(bytes: &'a [u8]) -> impl SerializeFn<W> + 'a {
+        der_tlv(DerType::OctetString, slice(bytes))
     }
 
     /// Encodes an ASN.1 Object Identifier using DER.
