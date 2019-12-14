@@ -97,7 +97,7 @@ pub mod write {
     ///      algorithm               OBJECT IDENTIFIER,
     ///      parameters              ANY DEFINED BY algorithm OPTIONAL  }
     /// ```
-    fn algorithm_identifier<'a, W: Write + 'a, Alg: AlgorithmIdentifier>(
+    pub fn algorithm_identifier<'a, W: Write + 'a, Alg: AlgorithmIdentifier>(
         algorithm_id: &'a Alg,
     ) -> impl SerializeFn<W> + 'a {
         der_sequence((
