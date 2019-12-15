@@ -6,6 +6,7 @@ enum DerType {
     Integer,
     BitString,
     OctetString,
+    Null,
     Oid,
     Utf8String,
     Sequence,
@@ -26,6 +27,8 @@ impl DerType {
             DerType::BitString => (0, 0, 3),
             // Universal | Primitive | OCTET STRING
             DerType::OctetString => (0, 0, 4),
+            // Universal | Primitive | NULL
+            DerType::Null => (0, 0, 5),
             // Universal | Primitive | OBJECT IDENTIFIER
             DerType::Oid => (0, 0, 6),
             // Universal | Primitive | UTF8String
@@ -160,6 +163,16 @@ pub mod write {
     /// ```
     pub fn der_octet_string<'a, W: Write + 'a>(bytes: &'a [u8]) -> impl SerializeFn<W> + 'a {
         der_tlv(DerType::OctetString, slice(bytes))
+    }
+
+    /// Encodes an ASN.1 NULL using DER.
+    ///
+    /// From X.690 section 8.7.2:
+    /// ```text
+    /// The contents octets shall not contain any octets. Note – The length octet is zero.
+    /// ```
+    pub fn der_null<'a, W: Write + 'a>() -> impl SerializeFn<W> + 'a {
+        der_tlv(DerType::Null, |w: WriteContext<Vec<u8>>| Ok(w))
     }
 
     /// Encodes an ASN.1 Object Identifier using DER.
