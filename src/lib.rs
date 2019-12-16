@@ -108,7 +108,7 @@ pub mod write {
 
     /// Encodes a `str` as an X.509 Common Name.
     ///
-    /// From [RFC 5280](https://tools.ietf.org/html/rfc5280#section-4.1.2.4):
+    /// From [RFC 5280 section 4.1.2.4](https://tools.ietf.org/html/rfc5280#section-4.1.2.4):
     /// ```text
     /// Name ::= CHOICE { -- only one possibility for now --
     ///   rdnSequence  RDNSequence }
@@ -125,15 +125,26 @@ pub mod write {
     /// AttributeType ::= OBJECT IDENTIFIER
     ///
     /// AttributeValue ::= ANY -- DEFINED BY AttributeType
-    ///
-    /// DirectoryString ::= CHOICE {
-    ///       teletexString           TeletexString (SIZE (1..MAX)),
-    ///       printableString         PrintableString (SIZE (1..MAX)),
-    ///       universalString         UniversalString (SIZE (1..MAX)),
-    ///       utf8String              UTF8String (SIZE (1..MAX)),
-    ///       bmpString               BMPString (SIZE (1..MAX)) }
     /// ```
+    ///
+    /// From [RFC 5280 appendix A.1](https://tools.ietf.org/html/rfc5280#appendix-A.1):
+    /// ```text
+    /// X520CommonName ::= CHOICE {
+    ///      teletexString     TeletexString   (SIZE (1..ub-common-name)),
+    ///      printableString   PrintableString (SIZE (1..ub-common-name)),
+    ///      universalString   UniversalString (SIZE (1..ub-common-name)),
+    ///      utf8String        UTF8String      (SIZE (1..ub-common-name)),
+    ///      bmpString         BMPString       (SIZE (1..ub-common-name)) }
+    ///
+    /// ub-common-name INTEGER ::= 64
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `name.len() > 64`.
     fn name<'a, W: Write + 'a>(name: &'a str) -> impl SerializeFn<W> + 'a {
+        assert!(name.len() <= 64);
+
         der_sequence((der_set((der_sequence((
             der_oid(InternalOid::IdAtCommonName),
             der_utf8_string(name),
@@ -224,7 +235,10 @@ pub mod write {
     ///
     /// # Panics
     ///
-    /// Panics if `serial_number.len() > 20`.
+    /// Panics if:
+    /// - `serial_number.len() > 20`
+    /// - `issuer.len() > 64`
+    /// - `subject.len() > 64`
     pub fn tbs_certificate<'a, W: Write + 'a, Alg, PKI>(
         serial_number: &'a [u8],
         signature: &'a Alg,
