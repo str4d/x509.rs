@@ -1,14 +1,16 @@
 //! Handlers for DER serialization.
 
+use std::str::FromStr;
+
 /// DER types that we care about.
 enum DerType {
-    Explicit,
+    Explicit(u8),
     Integer,
     BitString,
     OctetString,
     Null,
     Oid,
-    Utf8String,
+    PrintableString,
     Sequence,
     Set,
     UtcTime,
@@ -20,7 +22,7 @@ impl DerType {
     pub(super) fn parts(&self) -> (u8, u8, u8) {
         match self {
             // Context-specific | Constructed | EOC
-            DerType::Explicit => (2, 1, 0),
+            DerType::Explicit(typ) => (2, 1, *typ),
             // Universal | Primitive | INTEGER
             DerType::Integer => (0, 0, 2),
             // Universal | Primitive | BIT STRING
@@ -32,7 +34,7 @@ impl DerType {
             // Universal | Primitive | OBJECT IDENTIFIER
             DerType::Oid => (0, 0, 6),
             // Universal | Primitive | UTF8String
-            DerType::Utf8String => (0, 0, 12),
+            DerType::PrintableString => (0, 0, 19),
             // Universal | Constructed | SEQUENCE
             DerType::Sequence => (0, 1, 16),
             // Universal | Constructed | SET
@@ -50,6 +52,21 @@ pub trait Oid: AsRef<[u64]> {}
 
 impl Oid for &'static [u64] {}
 
+impl<T> Oid for &T where T: Oid {}
+
+#[derive(Clone)]
+pub struct PrintableString(String);
+
+impl FromStr for PrintableString {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // TODO: Match against restricted character set.
+        assert!(s.len() <= 64);
+        Ok(PrintableString(s.to_owned()))
+    }
+}
+
 /// DER serialization APIs.
 pub mod write {
     use chrono::{DateTime, Utc};
@@ -63,7 +80,7 @@ pub mod write {
     };
     use std::io::Write;
 
-    use super::{DerType, Oid};
+    use super::{DerType, Oid, PrintableString};
 
     /// Encodes an ASN.1 type.
     fn der_type<W: Write>(typ: DerType) -> impl SerializeFn<W> {
@@ -110,11 +127,11 @@ pub mod write {
     /// Wraps an ASN.1 data value in an EXPLICIT marker.
     ///
     /// TODO: Find a specification reference for this.
-    pub fn der_explicit<W: Write, Gen>(inner: Gen) -> impl SerializeFn<W>
+    pub fn der_explicit<W: Write, Gen>(typ: u8, inner: Gen) -> impl SerializeFn<W>
     where
         Gen: SerializeFn<Vec<u8>>,
     {
-        der_tlv(DerType::Explicit, inner)
+        der_tlv(DerType::Explicit(typ), inner)
     }
 
     /// Encodes a big-endian-encoded integer as an ASN.1 integer using DER.
@@ -232,9 +249,11 @@ pub mod write {
         }
     }
 
-    /// Encodes an ASN.1 UTF8String using DER.
-    pub fn der_utf8_string<'a, W: Write + 'a>(s: &'a str) -> impl SerializeFn<W> + 'a {
-        der_tlv(DerType::Utf8String, string(s))
+    /// Encodes an ASN.1 PrintableString using DER.
+    pub fn der_printable_string<'a, W: Write + 'a>(
+        s: &'a PrintableString,
+    ) -> impl SerializeFn<W> + 'a {
+        der_tlv(DerType::PrintableString, string(&s.0))
     }
 
     /// Encodes the output of a sequence of serializers as an ASN.1 sequence using DER.

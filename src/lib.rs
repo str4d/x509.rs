@@ -33,15 +33,25 @@ pub trait SubjectPublicKeyInfo {
     fn public_key(&self) -> Self::SubjectPublicKey;
 }
 
+#[derive(Clone)]
+pub enum RdnType {
+    Organization,
+    OrganizationUnit,
+    CommonName,
+}
+
 /// X.509 serialization APIs.
 pub mod write {
     use chrono::{DateTime, Datelike, TimeZone, Utc};
     use cookie_factory::{
         combinator::{cond, slice},
+        multi::all,
         sequence::pair,
         SerializeFn, WriteContext,
     };
     use std::io::Write;
+
+    use crate::{der::PrintableString, RdnType};
 
     use super::{
         der::{write::*, Oid},
@@ -64,18 +74,32 @@ pub mod write {
 
     /// Object identifiers used internally by X.509.
     enum InternalOid {
+        IdAtOrganization,
+        IdAtOrganizationUnit,
         IdAtCommonName,
     }
 
     impl AsRef<[u64]> for InternalOid {
         fn as_ref(&self) -> &[u64] {
             match self {
+                InternalOid::IdAtOrganization => &[2, 5, 4, 10],
+                InternalOid::IdAtOrganizationUnit => &[2, 5, 4, 11],
                 InternalOid::IdAtCommonName => &[2, 5, 4, 3],
             }
         }
     }
 
     impl Oid for InternalOid {}
+
+    impl RdnType {
+        fn oid(&self) -> InternalOid {
+            match self {
+                RdnType::Organization => InternalOid::IdAtOrganization,
+                RdnType::OrganizationUnit => InternalOid::IdAtOrganizationUnit,
+                RdnType::CommonName => InternalOid::IdAtCommonName,
+            }
+        }
+    }
 
     /// From [RFC 5280](https://tools.ietf.org/html/rfc5280#section-4.1):
     /// ```text
@@ -88,7 +112,7 @@ pub mod write {
     /// ```
     fn version<W: Write>(version: Version) -> impl SerializeFn<W> {
         // TODO: Omit version if V1, once x509-parser correctly handles this.
-        der_explicit(der_integer_usize(version.into()))
+        der_explicit(0, der_integer_usize(version.into()))
     }
 
     /// From [RFC 5280](https://tools.ietf.org/html/rfc5280#section-4.1.1.2):
@@ -104,6 +128,15 @@ pub mod write {
             der_oid(algorithm_id.algorithm()),
             move |w: WriteContext<Vec<u8>>| algorithm_id.parameters(w),
         ))
+    }
+
+    fn relative_distinguished_name<'a, W: Write + 'a>(
+        (rdn_type, value): &'a (RdnType, PrintableString),
+    ) -> impl SerializeFn<W> + 'a {
+        der_set((der_sequence((
+            der_oid(rdn_type.oid()),
+            der_printable_string(&value),
+        )),))
     }
 
     /// Encodes a `str` as an X.509 Common Name.
@@ -142,13 +175,10 @@ pub mod write {
     /// # Panics
     ///
     /// Panics if `name.len() > 64`.
-    fn name<'a, W: Write + 'a>(name: &'a str) -> impl SerializeFn<W> + 'a {
-        assert!(name.len() <= 64);
-
-        der_sequence((der_set((der_sequence((
-            der_oid(InternalOid::IdAtCommonName),
-            der_utf8_string(name),
-        )),)),))
+    fn name<'a, W: Write + 'a>(
+        rdn: impl Iterator<Item = &'a (RdnType, PrintableString)> + Clone + 'a,
+    ) -> impl SerializeFn<W> + 'a {
+        der_sequence((all(rdn.map(relative_distinguished_name)),))
     }
 
     /// From [RFC 5280](https://tools.ietf.org/html/rfc5280#section-4.1):
@@ -207,6 +237,28 @@ pub mod write {
         }
     }
 
+    fn extension<'a, O: Oid + 'a, W: Write + 'a>(
+        (oid, bytes): &'a (O, &'a [u8]),
+    ) -> impl SerializeFn<W> + 'a {
+        der_sequence((der_oid(oid), der_octet_string(bytes)))
+    }
+
+    /// From [RFC 5280](https://tools.ietf.org/html/rfc5280#section-4.1):
+    /// ```text
+    /// TBSCertificate  ::=  SEQUENCE  {
+    ///      ...
+    ///      extensions      [3]  EXPLICIT Extensions OPTIONAL
+    ///                           -- If present, version MUST be v3
+    ///      }
+    ///
+    /// Version  ::=  INTEGER  {  v1(0), v2(1), v3(2)  }
+    /// ```
+    fn extensions<'a, O: Oid + 'a, W: Write + 'a>(
+        extensions: impl Iterator<Item = &'a (O, &'a [u8])> + Clone + 'a,
+    ) -> impl SerializeFn<W> + 'a {
+        der_explicit(3, der_sequence((all(extensions.map(extension)),)))
+    }
+
     /// Encodes a version 1 X.509 `TBSCertificate` using DER.
     ///
     /// From [RFC 5280](https://tools.ietf.org/html/rfc5280#section-4.1):
@@ -237,15 +289,13 @@ pub mod write {
     ///
     /// Panics if:
     /// - `serial_number.len() > 20`
-    /// - `issuer.len() > 64`
-    /// - `subject.len() > 64`
     pub fn tbs_certificate<'a, W: Write + 'a, Alg, PKI>(
         serial_number: &'a [u8],
         signature: &'a Alg,
-        issuer: &'a str,
+        issuer: impl Iterator<Item = &'a (RdnType, PrintableString)> + Clone + 'a,
         not_before: DateTime<Utc>,
         not_after: Option<DateTime<Utc>>,
-        subject: &'a str,
+        subject: impl Iterator<Item = &'a (RdnType, PrintableString)> + Clone + 'a,
         subject_pki: &'a PKI,
     ) -> impl SerializeFn<W> + 'a
     where
@@ -262,6 +312,34 @@ pub mod write {
             validity(not_before, not_after),
             name(subject),
             subject_public_key_info(subject_pki),
+        ))
+    }
+
+    pub fn tbs_certificate_with_extensions<'a, W: Write + 'a, O: Oid + 'a, Alg, PKI>(
+        serial_number: &'a [u8],
+        signature: &'a Alg,
+        issuer: impl Iterator<Item = &'a (RdnType, PrintableString)> + Clone + 'a,
+        not_before: DateTime<Utc>,
+        not_after: Option<DateTime<Utc>>,
+        subject: impl Iterator<Item = &'a (RdnType, PrintableString)> + Clone + 'a,
+        subject_pki: &'a PKI,
+        exts: impl Iterator<Item = &'a (O, &'a [u8])> + Clone + 'a,
+    ) -> impl SerializeFn<W> + 'a
+    where
+        Alg: AlgorithmIdentifier,
+        PKI: SubjectPublicKeyInfo,
+    {
+        assert!(serial_number.len() <= 20);
+
+        der_sequence((
+            version(Version::V3),
+            der_integer(serial_number),
+            algorithm_identifier(signature),
+            name(issuer),
+            validity(not_before, not_after),
+            name(subject),
+            subject_public_key_info(subject_pki),
+            extensions(exts),
         ))
     }
 
