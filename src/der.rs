@@ -2,7 +2,7 @@
 
 /// DER types that we care about.
 enum DerType {
-    Explicit,
+    Explicit(u8),
     Integer,
     BitString,
     OctetString,
@@ -20,7 +20,7 @@ impl DerType {
     pub(super) fn parts(&self) -> (u8, u8, u8) {
         match self {
             // Context-specific | Constructed | EOC
-            DerType::Explicit => (2, 1, 0),
+            DerType::Explicit(typ) => (2, 1, *typ),
             // Universal | Primitive | INTEGER
             DerType::Integer => (0, 0, 2),
             // Universal | Primitive | BIT STRING
@@ -110,11 +110,11 @@ pub mod write {
     /// Wraps an ASN.1 data value in an EXPLICIT marker.
     ///
     /// TODO: Find a specification reference for this.
-    pub fn der_explicit<W: Write, Gen>(inner: Gen) -> impl SerializeFn<W>
+    pub fn der_explicit<W: Write, Gen>(typ: u8, inner: Gen) -> impl SerializeFn<W>
     where
         Gen: SerializeFn<Vec<u8>>,
     {
-        der_tlv(DerType::Explicit, inner)
+        der_tlv(DerType::Explicit(typ), inner)
     }
 
     /// Encodes a big-endian-encoded integer as an ASN.1 integer using DER.

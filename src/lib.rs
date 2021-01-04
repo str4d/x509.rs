@@ -88,7 +88,7 @@ pub mod write {
     /// ```
     fn version<W: Write>(version: Version) -> impl SerializeFn<W> {
         // TODO: Omit version if V1, once x509-parser correctly handles this.
-        der_explicit(der_integer_usize(version.into()))
+        der_explicit(0, der_integer_usize(version.into()))
     }
 
     /// From [RFC 5280](https://tools.ietf.org/html/rfc5280#section-4.1.1.2):
