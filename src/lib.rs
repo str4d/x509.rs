@@ -33,15 +33,72 @@ pub trait SubjectPublicKeyInfo {
     fn public_key(&self) -> Self::SubjectPublicKey;
 }
 
+/// A certificate extension.
+pub struct Extension<'a, O: der::Oid + 'a> {
+    /// An OID that specifies the format and definitions of the extension.
+    oid: O,
+    /// Whether the information in the extension is important.
+    ///
+    /// ```text
+    /// Each extension in a certificate may be designated as critical or non-critical. A
+    /// certificate using system MUST reject the certificate if it encounters a critical
+    /// extension it does not recognize; however, a non-critical extension may be ignored
+    /// if it is not recognized.
+    /// ```
+    critical: bool,
+    /// The DER encoding of an ASN.1 value corresponding to the extension type identified
+    /// by `oid`.
+    value: &'a [u8],
+}
+
+impl<'a, O: der::Oid + 'a> Extension<'a, O> {
+    /// Constructs an extension.
+    ///
+    /// If this extension is not recognized by a certificate-using system, it will be
+    /// ignored.
+    ///
+    /// `oid` is an OID that specifies the format and definitions of the extension.
+    ///
+    /// `value` is the DER encoding of an ASN.1 value corresponding to the extension type
+    /// identified by `oid`.
+    pub fn regular(oid: O, value: &'a [u8]) -> Self {
+        Extension {
+            oid,
+            critical: false,
+            value,
+        }
+    }
+
+    /// Constructs a critical extension.
+    ///
+    /// If this extension is not recognized by a certificate-using system, the certificate
+    /// will be rejected.
+    ///
+    /// `oid` is an OID that specifies the format and definitions of the extension.
+    ///
+    /// `value` is the DER encoding of an ASN.1 value corresponding to the extension type
+    /// identified by `oid`.
+    pub fn critical(oid: O, value: &'a [u8]) -> Self {
+        Extension {
+            oid,
+            critical: true,
+            value,
+        }
+    }
+}
+
 /// X.509 serialization APIs.
 pub mod write {
     use chrono::{DateTime, Datelike, TimeZone, Utc};
     use cookie_factory::{
         combinator::{cond, slice},
+        multi::all,
         sequence::pair,
         SerializeFn, WriteContext,
     };
     use std::io::Write;
+
+    use crate::Extension;
 
     use super::{
         der::{write::*, Oid},
@@ -207,7 +264,65 @@ pub mod write {
         }
     }
 
+    /// From [RFC 5280](https://tools.ietf.org/html/rfc5280#section-4.1):
+    /// ```text
+    /// Extension  ::=  SEQUENCE  {
+    ///      extnID      OBJECT IDENTIFIER,
+    ///      critical    BOOLEAN DEFAULT FALSE,
+    ///      extnValue   OCTET STRING
+    ///                  -- contains the DER encoding of an ASN.1 value
+    ///                  -- corresponding to the extension type identified
+    ///                  -- by extnID
+    ///      }
+    /// ```
+    fn extension<'a, W: Write + 'a, O: Oid + 'a>(
+        extension: &'a Extension<'a, O>,
+    ) -> impl SerializeFn<W> + 'a {
+        der_sequence((
+            der_oid(&extension.oid),
+            der_default(der_boolean, extension.critical, false),
+            der_octet_string(extension.value),
+        ))
+    }
+
+    /// From [RFC 5280](https://tools.ietf.org/html/rfc5280#section-4.1):
+    /// ```text
+    /// TBSCertificate  ::=  SEQUENCE  {
+    ///      ...
+    ///      extensions      [3]  EXPLICIT Extensions OPTIONAL
+    ///                           -- If present, version MUST be v3
+    ///      }
+    ///
+    /// Extensions  ::=  SEQUENCE SIZE (1..MAX) OF Extension
+    /// ```
+    fn extensions<'a, W: Write + 'a, O: Oid + 'a>(
+        exts: &'a [Extension<'a, O>],
+    ) -> impl SerializeFn<W> + 'a {
+        cond(
+            !exts.is_empty(),
+            der_explicit(3, der_sequence((all(exts.iter().map(extension)),))),
+        )
+    }
+
     /// Encodes a version 1 X.509 `TBSCertificate` using DER.
+    ///
+    /// `extensions` is optional; if empty, no extensions section will be serialized. Due
+    /// to the need for an `O: Oid` type parameter, users who do not have any extensions
+    /// should use the following workaround:
+    ///
+    /// ```ignore
+    /// let exts: &[Extension<'_, &[u64]>] = &[];
+    /// x509::write::tbs_certificate(
+    ///     serial_number,
+    ///     signature,
+    ///     issuer,
+    ///     not_before,
+    ///     not_after,
+    ///     subject,
+    ///     subject_pki,
+    ///     exts,
+    /// );
+    /// ```
     ///
     /// From [RFC 5280](https://tools.ietf.org/html/rfc5280#section-4.1):
     /// ```text
@@ -239,7 +354,7 @@ pub mod write {
     /// - `serial_number.len() > 20`
     /// - `issuer.len() > 64`
     /// - `subject.len() > 64`
-    pub fn tbs_certificate<'a, W: Write + 'a, Alg, PKI>(
+    pub fn tbs_certificate<'a, W: Write + 'a, Alg, PKI, O: Oid + 'a>(
         serial_number: &'a [u8],
         signature: &'a Alg,
         issuer: &'a str,
@@ -247,6 +362,7 @@ pub mod write {
         not_after: Option<DateTime<Utc>>,
         subject: &'a str,
         subject_pki: &'a PKI,
+        exts: &'a [Extension<'a, O>],
     ) -> impl SerializeFn<W> + 'a
     where
         Alg: AlgorithmIdentifier,
@@ -262,6 +378,7 @@ pub mod write {
             validity(not_before, not_after),
             name(subject),
             subject_public_key_info(subject_pki),
+            extensions(exts),
         ))
     }
 
@@ -287,5 +404,95 @@ pub mod write {
             algorithm_identifier(signature_algorithm),
             der_bit_string(signature),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+
+    use crate::{write, AlgorithmIdentifier, Extension, SubjectPublicKeyInfo};
+
+    struct MockAlgorithmId;
+
+    impl AlgorithmIdentifier for MockAlgorithmId {
+        type AlgorithmOid = &'static [u64];
+
+        fn algorithm(&self) -> Self::AlgorithmOid {
+            &[1, 1, 1, 1]
+        }
+
+        fn parameters<W: std::io::Write>(
+            &self,
+            w: cookie_factory::WriteContext<W>,
+        ) -> cookie_factory::GenResult<W> {
+            Ok(w)
+        }
+    }
+
+    struct MockPublicKeyInfo;
+
+    impl SubjectPublicKeyInfo for MockPublicKeyInfo {
+        type AlgorithmId = MockAlgorithmId;
+        type SubjectPublicKey = Vec<u8>;
+
+        fn algorithm_id(&self) -> Self::AlgorithmId {
+            MockAlgorithmId
+        }
+
+        fn public_key(&self) -> Self::SubjectPublicKey {
+            vec![]
+        }
+    }
+
+    #[test]
+    fn extensions() {
+        let signature = MockAlgorithmId;
+        let not_before = Utc::now();
+        let subject_pki = MockPublicKeyInfo;
+        let exts = &[
+            Extension::regular(&[1u64, 2, 3, 4][..], &[1, 2, 3]),
+            Extension::critical(&[1u64, 4, 5, 6][..], &[7, 7, 7]),
+        ];
+
+        let mut tbs_cert = vec![];
+        cookie_factory::gen(
+            write::tbs_certificate(
+                &[],
+                &signature,
+                "",
+                not_before,
+                None,
+                "",
+                &subject_pki,
+                exts,
+            ),
+            &mut tbs_cert,
+        )
+        .unwrap();
+
+        let mut data = vec![];
+        cookie_factory::gen(
+            write::certificate(&tbs_cert, &MockAlgorithmId, &[]),
+            &mut data,
+        )
+        .unwrap();
+
+        let (_, cert) = x509_parser::parse_x509_certificate(&data).unwrap();
+
+        assert_eq!(
+            cert.validity().not_before.timestamp(),
+            not_before.timestamp()
+        );
+
+        for ext in exts {
+            let oid = x509_parser::der_parser::oid::Oid::from(ext.oid).unwrap();
+            if let Some(extension) = cert.extensions().get(&oid) {
+                assert_eq!(extension.critical, ext.critical);
+                assert_eq!(extension.value, ext.value);
+            } else {
+                panic!();
+            }
+        }
     }
 }
