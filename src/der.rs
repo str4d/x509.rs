@@ -2,7 +2,8 @@
 
 /// DER types that we care about.
 enum DerType {
-    Explicit,
+    Explicit(u8),
+    Boolean,
     Integer,
     BitString,
     OctetString,
@@ -20,7 +21,9 @@ impl DerType {
     pub(super) fn parts(&self) -> (u8, u8, u8) {
         match self {
             // Context-specific | Constructed | EOC
-            DerType::Explicit => (2, 1, 0),
+            DerType::Explicit(typ) => (2, 1, *typ),
+            // Universal | Primitive | BOOLEAN
+            DerType::Boolean => (0, 0, 1),
             // Universal | Primitive | INTEGER
             DerType::Integer => (0, 0, 2),
             // Universal | Primitive | BIT STRING
@@ -49,6 +52,8 @@ impl DerType {
 pub trait Oid: AsRef<[u64]> {}
 
 impl Oid for &'static [u64] {}
+
+impl<T> Oid for &T where T: Oid {}
 
 /// DER serialization APIs.
 pub mod write {
@@ -107,14 +112,35 @@ pub mod write {
         tuple((der_type(typ), der_length(content.len()), slice(content)))
     }
 
+    /// Serializes the given value if it is not equal to its default.
+    pub fn der_default<W: Write, Gen, F, T>(inner: F, val: T, default: T) -> impl SerializeFn<W>
+    where
+        Gen: SerializeFn<W>,
+        F: FnOnce(T) -> Gen,
+        T: PartialEq,
+    {
+        cond(val != default, inner(val))
+    }
+
     /// Wraps an ASN.1 data value in an EXPLICIT marker.
     ///
     /// TODO: Find a specification reference for this.
-    pub fn der_explicit<W: Write, Gen>(inner: Gen) -> impl SerializeFn<W>
+    pub fn der_explicit<W: Write, Gen>(typ: u8, inner: Gen) -> impl SerializeFn<W>
     where
         Gen: SerializeFn<Vec<u8>>,
     {
-        der_tlv(DerType::Explicit, inner)
+        der_tlv(DerType::Explicit(typ), inner)
+    }
+
+    /// Encodes a boolean as an ASN.1 BOOLEAN using DER.
+    ///
+    /// From X.690 section 11.1:
+    /// ```text
+    /// If the encoding represents the boolean value TRUE, its single contents octet shall
+    /// have all eight bits set to one.
+    /// ```
+    pub fn der_boolean<W: Write>(val: bool) -> impl SerializeFn<W> {
+        der_tlv(DerType::Boolean, slice(if val { &[0xff] } else { &[0x00] }))
     }
 
     /// Encodes a big-endian-encoded integer as an ASN.1 integer using DER.
@@ -172,7 +198,7 @@ pub mod write {
     /// The contents octets shall not contain any octets. Note – The length octet is zero.
     /// ```
     pub fn der_null<'a, W: Write + 'a>() -> impl SerializeFn<W> + 'a {
-        der_tlv(DerType::Null, |w: WriteContext<Vec<u8>>| Ok(w))
+        der_tlv(DerType::Null, Ok)
     }
 
     /// Encodes an ASN.1 Object Identifier using DER.

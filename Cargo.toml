@@ -12,5 +12,8 @@ edition = "2018"
 chrono = "0.4"
 cookie-factory = "0.3"
 
+[dev-dependencies]
+x509-parser = "0.9"
+
 [badges]
 maintenance = { status = "experimental" }
