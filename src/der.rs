@@ -198,7 +198,7 @@ pub mod write {
     /// The contents octets shall not contain any octets. Note – The length octet is zero.
     /// ```
     pub fn der_null<'a, W: Write + 'a>() -> impl SerializeFn<W> + 'a {
-        der_tlv(DerType::Null, |w: WriteContext<Vec<u8>>| Ok(w))
+        der_tlv(DerType::Null, Ok)
     }
 
     /// Encodes an ASN.1 Object Identifier using DER.
